@@ -9,27 +9,68 @@ public class CryptoUtils {
 
     private static List<KeyHolder> holders = new ArrayList<>();
 
-    private static BigInteger polynome(BigInteger[] coefs, BigInteger x){
-        BigInteger result = BigInteger.ZERO;
-        for(int i=0; i< coefs.length; i++){
-            result = result.add((x.pow(i)).multiply(coefs[coefs.length-1-i]));
+    private static BigInteger p;
+    private static BigInteger g;
+    private static BigInteger x;
+    private static int nbThread;
+    private static int l;
+
+    public static int getNbThread() {
+        return nbThread;
+    }
+
+    public static void setNbThread(int nbThread) {
+        CryptoUtils.nbThread = nbThread;
+    }
+
+    public static void setP(BigInteger p) {
+        CryptoUtils.p = p;
+    }
+
+    public static int getL() {
+        return l;
+    }
+
+    public static BigInteger L(List<BigInteger> all, int id, BigInteger x, BigInteger p) {
+        BigInteger l = BigInteger.ONE;
+        BigInteger xi = all.get(id);
+        BigInteger num;
+        BigInteger denom;
+        BigInteger divide;
+        for (int j = 0; j < all.size(); j++) {
+            if (id != j) {
+                num = x.subtract(all.get(j));
+                denom = xi.subtract(all.get(j));
+                divide = num.divide(denom);
+                l = l.multiply(divide);
+            }
         }
-        return result;
+        return l.mod(p);
+    }
+
+    private static BigInteger polynome(BigInteger[] coefs, BigInteger x, BigInteger p) {
+        BigInteger result = BigInteger.ZERO;
+        for (int i = 0; i < coefs.length; i++) {
+            result = result.add((x.pow(i)).multiply(coefs[coefs.length - 1 - i]));
+        }
+        return result.mod(p);
     }
 
     private static BigInteger tirageP(int l) {
-        BigInteger p, pPrime;
+        CryptoUtils.l = l;
+        p = BigInteger.TWO;
         do {
-            p = BigInteger.probablePrime(l, new Random());
-            pPrime = p.subtract(BigInteger.ONE).divide(BigInteger.TWO);
-        } while (!pPrime.isProbablePrime(100));
+            Thread n = new FindP();
+            n.start();
+        } while (!(p.subtract(BigInteger.ONE).divide(BigInteger.TWO)).isProbablePrime(100));
+        System.out.println(p);
         return p;
     }
 
     private static BigInteger tirageG(BigInteger p) {
         boolean found = false;
         BigInteger g = new BigInteger(p.bitLength(), new Random());
-        ;
+
         BigInteger pPrime = p.subtract(BigInteger.ONE).divide(BigInteger.TWO);
         while (!found) {
             BigInteger remainder = g.modPow(pPrime, p);
@@ -52,13 +93,14 @@ public class CryptoUtils {
 
     /**
      * KeyGen of Elgamal
-     * @param t -> number of minimum available KeyHolder
-     * @param n -> number of shares
+     *
+     * @param t    -> number of minimum available KeyHolder
+     * @param n    -> number of shares
      * @param high -> the highest coefficient for polynome
-     * @param bit -> bit length of the key
+     * @param bit  -> bit length of the key
      * @return publicKey and secretKey
      */
-    public static Key[] KeyGen(int bit, int t, BigInteger high, int n){
+    public static Key[] KeyGen(int bit, int t, BigInteger high, int n) {
 
         BigInteger p = tirageP(bit);
         BigInteger g = tirageG(p);
@@ -67,27 +109,19 @@ public class CryptoUtils {
         //choose p
 
 
-
-
         //polynome generation
         BigInteger[] coefs = new BigInteger[t];
-        for(int i=0; i<t-1; i++){
-            do{
-                coefs[i] = new BigInteger(bit, new Random());
-            }while (x.compareTo(high)>=0);
+        for (int i = 0; i < t - 1; i++) {
+            coefs[i] = BigInteger.valueOf(3);
+
         }
-        coefs[t-1] = x;
+        coefs[t - 1] = x;
+        System.out.println(Arrays.toString(coefs));
 
         BigInteger[] shares = new BigInteger[n];
 
-        for(int i=0; i<n; i++){
-            BigInteger xi;
-            do{
-                xi = new BigInteger(bit, new Random());
-            }while (xi.compareTo(high)>0);
-
-            holders.add(new KeyHolder(xi, polynome(coefs, x)));
-
+        for (int i = 0; i < n; i++) {
+            holders.add(new KeyHolder(BigInteger.valueOf(i), polynome(coefs, BigInteger.valueOf(i), p)));
         }
 
         return new Key[]{new PublicKey(p, g, h), new SecretKey(x)};
@@ -107,6 +141,7 @@ public class CryptoUtils {
 
         return x;
     }
+
     private static BigInteger[] produireC(BigInteger g, BigInteger r, BigInteger p, BigInteger h, int m) {
 
         BigInteger c[] = {BigInteger.ZERO, BigInteger.ZERO};
@@ -121,33 +156,35 @@ public class CryptoUtils {
     private static BigInteger tirageR(BigInteger p) {
         return tirageX(p);
     }
+
     public static BigInteger[] Encrypt(PublicKey pk, int m) {
         BigInteger r = tirageR(pk.getP());
         return produireC(pk.getG(), r, pk.getP(), pk.getH(), m);
     }
 
-    public static BigInteger Decrypt(BigInteger[] c,  PublicKey key){
-        ArrayList<BigInteger> deltas = new ArrayList<>();
-        int n=holders.size();
-
-        for(int i=0; i<n; i++){
-            int k=0;
-            BigInteger delta = BigInteger.ONE;
-            do{
-                if(k!=i){
-                    delta = delta.multiply( holders.get(k).getX().divide(holders.get(k).getX().subtract(holders.get(i).getX()))).mod(key.getP());
-                }
-                k++;
-            }while (k<n);
-            deltas.add(delta);
+    public static int Decrypt(BigInteger[] c, PublicKey key) {
+        List<BigInteger> x = new ArrayList<>();
+        for(int i=0; i<holders.size(); i++){
+            x.add(holders.get(i).getX());
+        }
+        List<BigInteger> alphas = new ArrayList<>();
+        BigInteger l = BigInteger.ONE;
+        for(int i=0; i< holders.size(); i++){
+            alphas.add(L(x, i, BigInteger.valueOf(0), key.getP())); //calcul Ai
         }
 
-        BigInteger d= BigInteger.ONE;
-        for(int i=0; i<n;i++){
-            d = d.multiply(holders.get(i).computeD(c[0], key.getP()).modPow(deltas.get(i),key.getP()));
+        List<BigInteger> d = new ArrayList<>();
+        for(int i=0; i<holders.size(); i++){
+            d.add(c[0].modPow(holders.get(i).getS(), key.getP()));
         }
-        BigInteger m = d.modInverse(key.getP()).multiply(c[1]).mod(key.getP());
-        return m;
+        BigInteger drill = BigInteger.ONE;
+        for(int i=0; i<holders.size(); i++){
+            drill = drill.multiply(d.get(i).modPow(alphas.get(i), key.getP()));
+        }
+
+        BigInteger m = c[1].multiply(drill.modInverse(key.getP())).mod(key.getP());
+
+        return produirem(m,key.getP(), key.getG());
     }
 
 
@@ -156,6 +193,7 @@ public class CryptoUtils {
         BigInteger uxinv = (u.pow(x.intValue())).modInverse(p);
         return v1p.multiply(uxinv).mod(p);
     }
+
     private static int produirem(BigInteger M, BigInteger p, BigInteger g) {
         BigInteger m = BigInteger.ZERO;
         BigInteger mReel = new BigInteger(String.valueOf(8));
@@ -170,14 +208,21 @@ public class CryptoUtils {
         return produirem(M, pk.getP(), pk.getG());
     }
 
-    public static void main(String[] args) {
-        Key[] keys = KeyGen(5,3,BigInteger.valueOf(10), 5);
 
+    public static void main(String[] args) {
+        Key[] keys = KeyGen(15, 3, BigInteger.valueOf(10), 3);
         PublicKey pk = (PublicKey) keys[0];
+
+
+        for (KeyHolder hold : holders) {
+            System.out.println(hold.getX() + " y = " + hold.getS());
+        }
         SecretKey sk = (SecretKey) keys[1];
         System.out.println(pk);
         BigInteger[] c = Encrypt(pk, 4);
-        int m = DecryptBasic(pk, sk, c);
-        System.out.println(m);
+
+        int mb = Decrypt( c, pk);
+        System.out.println(mb);
+
     }
 }
